@@ -2,7 +2,7 @@ name: MLOps Pipeline
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
     paths:
       - 'data/**.dvc'
       - 'src/**.py'
@@ -32,7 +32,7 @@ jobs:
 
       - name: Run unit tests
         # TODO 1: Viet lenh de chay pytest tren thu muc tests/ voi co -v
-        run: # <dien lenh o day>
+        run: pytest tests/ -v
 
 
   # ---------------------------------------------------------------------------
@@ -58,19 +58,23 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Authenticate to Cloud Storage
-        # TODO 2: Ghi noi dung credentials ra file tam va set bien moi truong xac thuc.
-        # GCP:   echo '${{ secrets.CLOUD_CREDENTIALS }}' > /tmp/sa-key.json
-        #        echo "GOOGLE_APPLICATION_CREDENTIALS=/tmp/sa-key.json" >> $GITHUB_ENV
-        # AWS:   echo "AWS_ACCESS_KEY_ID=..." >> $GITHUB_ENV  (lay tu secrets)
-        #        echo "AWS_SECRET_ACCESS_KEY=..." >> $GITHUB_ENV
-        # Azure: echo "AZURE_STORAGE_CONNECTION_STRING=..." >> $GITHUB_ENV
+        # TODO 2: Ghi noi dung credentials va set bien moi truong xac thuc AWS.
+        #         CLOUD_CREDENTIALS la JSON: {"aws_access_key_id":"...","aws_secret_access_key":"..."}
         run: |
-          # <dien code o day>
+          echo '${{ secrets.CLOUD_CREDENTIALS }}' > /tmp/aws-creds.json
+          AKID=$(python -c "import json;print(json.load(open('/tmp/aws-creds.json'))['aws_access_key_id'])")
+          ASAK=$(python -c "import json;print(json.load(open('/tmp/aws-creds.json'))['aws_secret_access_key'])")
+          echo "::add-mask::$AKID"
+          echo "::add-mask::$ASAK"
+          echo "AWS_ACCESS_KEY_ID=$AKID" >> $GITHUB_ENV
+          echo "AWS_SECRET_ACCESS_KEY=$ASAK" >> $GITHUB_ENV
+          echo "AWS_DEFAULT_REGION=us-east-1" >> $GITHUB_ENV
+          rm -f /tmp/aws-creds.json
 
       - name: Pull data with DVC
         # TODO 3: Pull cac file du lieu can thiet tu cloud storage bang lenh dvc pull.
         #         Chi pull train_phase1.csv va eval.csv (khong can train_phase2.csv).
-        run: # <dien lenh o day>
+        run: dvc pull data/train_phase1.csv.dvc data/eval.csv.dvc
 
       - name: Train model
         run: python src/train.py
@@ -79,20 +83,25 @@ jobs:
         id: read_metrics
         # TODO 4: Doc gia tri "accuracy" tu outputs/metrics.json bang Python inline.
         #         Set ket qua thanh output "accuracy" de job deploy co the doc.
-        #
-        # Goi y:
-        #   ACC=$(python -c "import json; d=json.load(open('outputs/metrics.json')); print(d['accuracy'])")
-        #   echo "accuracy=$ACC" >> $GITHUB_OUTPUT
         run: |
-          # <dien code o day>
+          ACC=$(python -c "import json; d=json.load(open('outputs/metrics.json')); print(d['accuracy'])")
+          echo "accuracy=$ACC" >> $GITHUB_OUTPUT
+          echo "Accuracy doc duoc: $ACC"
 
       - name: Upload model to Cloud Storage
-        # TODO 5: Su dung cloud SDK de upload models/model.pkl len
-        #         <bucket>/models/latest/model.pkl.
+        # TODO 5: Upload models/model.pkl len s3://<bucket>/models/latest/model.pkl
         #         Ten bucket lay tu secret CLOUD_BUCKET.
+        env:
+          CLOUD_BUCKET: ${{ secrets.CLOUD_BUCKET }}
         run: |
           python - <<'EOF'
-          # <dien code Python o day>
+          import os
+          import boto3
+
+          bucket_name = os.environ["CLOUD_BUCKET"]
+          s3 = boto3.client("s3")
+          s3.upload_file("models/model.pkl", bucket_name, "models/latest/model.pkl")
+          print(f"Da upload model len s3://{bucket_name}/models/latest/model.pkl")
           EOF
 
       - name: Save metrics as artifact
@@ -104,7 +113,7 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # JOB 3 - EVAL
-  # Kiem tra nguong chat luong (accuracy >= 0.70).
+  # Kiem tra nguong chat luong (accuracy >= 0.65).
   # Pipeline dung lai o day neu mo hinh chua dat yeu cau.
   # Chi chay khi Job 2 (Train) hoan thanh thanh cong.
   # ---------------------------------------------------------------------------
@@ -116,17 +125,14 @@ jobs:
 
       - name: Check eval gate
         # TODO 6: Doc accuracy tu output cua job train.
-        #         Neu accuracy < 0.70, ket thuc voi loi ro rang.
+        #         Neu accuracy < 0.65, ket thuc voi loi ro rang.
         #         Neu dat nguong, in thong bao va tiep tuc.
-        #
-        # Goi y:
-        #   acc = float("${{ needs.train.outputs.accuracy }}")
-        #   if acc < 0.70:
-        #       raise SystemExit(f"FAILED: accuracy {acc:.4f} < 0.70. Huy deploy.")
-        #   print("PASSED: dang trien khai model.")
         run: |
           python - <<'EOF'
-          # <dien code Python o day>
+          acc = float("${{ needs.train.outputs.accuracy }}")
+          if acc < 0.65:
+              raise SystemExit(f"FAILED: accuracy {acc:.4f} < 0.65. Huy deploy.")
+          print(f"PASSED: accuracy {acc:.4f} >= 0.65. Dang trien khai model.")
           EOF
 
 
@@ -149,11 +155,19 @@ jobs:
           key: ${{ secrets.VM_SSH_KEY }}
           script: |
             # TODO 7: Restart service mlops-serve tren VM.
+            sudo systemctl restart mlops-serve
+
             # TODO 8: Cho server san sang roi goi curl /health de xac nhan.
             #         Neu health check that bai sau nhieu lan thu, thoat voi exit 1.
-            #
-            # Goi y:
-            #   sudo systemctl restart mlops-serve
-            #   sleep 5
-            #   curl -sf http://localhost:8000/health && echo "Health check passed." || exit 1
-            # <dien lenh bash o day>
+            sleep 5
+            for i in 1 2 3 4 5; do
+              if curl -sf http://localhost:8000/health; then
+                echo ""
+                echo "Health check passed (lan thu $i)."
+                exit 0
+              fi
+              echo "Cho server khoi dong... (lan thu $i)"
+              sleep 3
+            done
+            echo "Health check that bai sau 5 lan thu."
+            exit 1

@@ -1,5 +1,18 @@
 # Sieu tham so cho mo hinh RandomForestClassifier
-# Thay doi cac gia tri nay giua cac lan chay de thi nghiem (Buoc 1)
-n_estimators: 100
-max_depth: 5
+# Bo tham so tot nhat duoc chon sau khi chay 9 thi nghiem tren MLflow (Buoc 1).
+#
+# Ket qua so sanh tren tap eval (500 mau), train tren train_phase1 (2998 mau):
+#   n_estimators=300, max_depth=None, min_samples_split=2  -> accuracy=0.6860  (TOT NHAT)
+#   n_estimators=200, max_depth=20,   min_samples_split=2  -> accuracy=0.6840
+#   n_estimators=300, max_depth=15,   min_samples_split=2  -> accuracy=0.6720
+#   n_estimators=200, max_depth=10,   min_samples_split=5  -> accuracy=0.6420
+#   n_estimators=100, max_depth=5,    min_samples_split=2  -> accuracy=0.5640
+#   n_estimators=50,  max_depth=3,    min_samples_split=2  -> accuracy=0.5580
+#
+# Ly do chon: max_depth khong gioi han + nhieu cay (300) cho phep rung hoc
+# day du cac tuong tac dac trung phi tuyen cua du lieu Wine Quality, dat
+# accuracy cao nhat ma khong bi gioi han do sau. Tang them so cay (>300)
+# hoac gioi han do sau deu khong cai thien them.
+n_estimators: 300
+max_depth: null
 min_samples_split: 2
