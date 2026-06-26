@@ -13,6 +13,8 @@
 # day du cac tuong tac dac trung phi tuyen cua du lieu Wine Quality, dat
 # accuracy cao nhat ma khong bi gioi han do sau. Tang them so cay (>300)
 # hoac gioi han do sau deu khong cai thien them.
+# Bonus 2: chon thuat toan (random_forest | gradient_boosting | logistic_regression)
+model_type: random_forest
 n_estimators: 300
 max_depth: null
 min_samples_split: 2

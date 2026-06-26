@@ -77,6 +77,12 @@ jobs:
         run: dvc pull data/train_phase1.csv.dvc data/eval.csv.dvc
 
       - name: Train model
+        # Bonus 1: dung MLflow tracking server tu xa (vd DagsHub) neu secrets duoc dat.
+        #          Neu khong co secret, mlflow tu dong ghi cuc bo (vo hai trong CI).
+        env:
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+          MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_TRACKING_USERNAME }}
+          MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
         run: python src/train.py
 
       - name: Read metrics
@@ -88,8 +94,34 @@ jobs:
           echo "accuracy=$ACC" >> $GITHUB_OUTPUT
           echo "Accuracy doc duoc: $ACC"
 
+      - name: Rollback guard
+        # Bonus 4: tai metrics cua model dang deploy tu S3 va so sanh accuracy.
+        #          Neu accuracy moi < accuracy cu -> HUY deploy (giu model cu).
+        env:
+          CLOUD_BUCKET: ${{ secrets.CLOUD_BUCKET }}
+        run: |
+          python - <<'EOF'
+          import os, json, boto3
+          bucket = os.environ["CLOUD_BUCKET"]
+          new_acc = json.load(open("outputs/metrics.json"))["accuracy"]
+          s3 = boto3.client("s3")
+          prev_acc = None
+          try:
+              obj = s3.get_object(Bucket=bucket, Key="models/latest/metrics.json")
+              prev_acc = json.loads(obj["Body"].read())["accuracy"]
+          except Exception as e:
+              print(f"Khong tim thay metrics cu (co the la lan deploy dau tien): {type(e).__name__}")
+          if prev_acc is None:
+              print(f"PASS: chua co model truoc do. accuracy moi = {new_acc:.4f}. Cho phep deploy.")
+          else:
+              print(f"So sanh accuracy: moi = {new_acc:.4f} | cu = {prev_acc:.4f}")
+              if new_acc < prev_acc:
+                  raise SystemExit(f"ROLLBACK: accuracy moi {new_acc:.4f} < cu {prev_acc:.4f}. Huy deploy, giu model cu.")
+              print("PASS: accuracy moi >= cu. Cho phep deploy.")
+          EOF
+
       - name: Upload model to Cloud Storage
-        # TODO 5: Upload models/model.pkl len s3://<bucket>/models/latest/model.pkl
+        # Upload models/model.pkl + outputs/metrics.json len s3://<bucket>/models/latest/
         #         Ten bucket lay tu secret CLOUD_BUCKET.
         env:
           CLOUD_BUCKET: ${{ secrets.CLOUD_BUCKET }}
@@ -101,14 +133,18 @@ jobs:
           bucket_name = os.environ["CLOUD_BUCKET"]
           s3 = boto3.client("s3")
           s3.upload_file("models/model.pkl", bucket_name, "models/latest/model.pkl")
-          print(f"Da upload model len s3://{bucket_name}/models/latest/model.pkl")
+          s3.upload_file("outputs/metrics.json", bucket_name, "models/latest/metrics.json")
+          print(f"Da upload model + metrics len s3://{bucket_name}/models/latest/")
           EOF
 
       - name: Save metrics as artifact
+        # Bonus 3: luu ca metrics.json va report.txt (confusion matrix + precision/recall)
         uses: actions/upload-artifact@v4
         with:
           name: metrics
-          path: outputs/metrics.json
+          path: |
+            outputs/metrics.json
+            outputs/report.txt
 
 
   # ---------------------------------------------------------------------------
